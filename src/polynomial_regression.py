@@ -1,117 +1,56 @@
+from functools import partial
+from typing import Dict, Tuple
+
 import numpy as np
-import pandas as pd
+from pydantic import ConfigDict, PositiveInt, validate_call
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-import matplotlib.pyplot as plt
+
+from src import common
+from src.common import ROOT, Metrics, PlotConfig, as_column, plot
+
+SIZE, PRICE = "Size", "Price"
+
+read_csv = partial(common.read_csv, required_columns=(SIZE, PRICE))
 
 
-def read_csv(file_path: str) -> pd.DataFrame:
-    """
-    Reads a CSV file and returns its content as a pandas DataFrame.
-
-    Parameters:
-    file_path (str): Path to the CSV file.
-
-    Returns:
-    pd.DataFrame: Loaded data.
-    """
-    data = pd.read_csv(file_path)
-    if data.empty:
-        raise ValueError("The CSV file is empty.")
-    return data
-
-
-def train_polynomial_regression(X: np.array, y: np.array, degree: int):
-    """
-    Trains a polynomial regression model.
-
-    Parameters:
-    X (np.array): Independent variable (e.g., house sizes).
-    y (np.array): Dependent variable (e.g., house prices).
-    degree (int): Degree of the polynomial.
-
-    Returns:
-    tuple: Trained model and polynomial feature transformer.
-    """
-
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+def train_polynomial_regression(
+    X: np.ndarray, y: np.ndarray, degree: PositiveInt
+) -> Tuple[LinearRegression, PolynomialFeatures]:
+    poly = PolynomialFeatures(degree=degree)
+    model = LinearRegression().fit(poly.fit_transform(as_column(X)), y)
     return model, poly
 
 
-def predict_prices(model: LinearRegression, poly: PolynomialFeatures, X: np.array):
-    """
-    Predicts prices using the trained polynomial regression model.
-
-    Parameters:
-    model (LinearRegression): Trained polynomial regression model.
-    poly (PolynomialFeatures): Polynomial feature transformer.
-    X (np.array): Independent variable for prediction.
-
-    Returns:
-    np.array: Predicted prices.
-    """
-
-    return model.predict(X_poly)
+def predict_prices(model: LinearRegression, poly: PolynomialFeatures, X: np.ndarray) -> np.ndarray:
+    return model.predict(poly.transform(as_column(X)))
 
 
-def evaluate_model(y_true: np.array, y_pred: np.array):
-    """
-    Evaluates the model using various metrics.
-
-    Parameters:
-    y_true (np.array): Actual prices.
-    y_pred (np.array): Predicted prices.
-
-    Returns:
-    dict: Evaluation metrics.
-    """
-
-    return {"MAE": mae, "MSE": mse, "RMSE": rmse}
+def evaluate_model(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+    return Metrics.from_predictions(y_true, y_pred).model_dump()
 
 
-def visualize_data(X: np.array, y: np.array, model: LinearRegression, poly: PolynomialFeatures):
-    """
-    Visualizes the original data and the regression curve.
-
-    Parameters:
-    X (np.array): Independent variable (e.g., house sizes).
-    y (np.array): Dependent variable (e.g., house prices).
-    model (LinearRegression): Trained polynomial regression model.
-    poly (PolynomialFeatures): Polynomial feature transformer.
-    """
+def visualize_data(X: np.ndarray, y: np.ndarray, model: LinearRegression, poly: PolynomialFeatures) -> None:
     X_plot = np.linspace(X.min(), X.max(), 100)
-    y_plot = predict_prices(model, poly, X_plot)
-
-    plt.scatter(X, y, color="blue", label="Actual Prices")
-    plt.plot(X_plot, y_plot, color="red", label="Polynomial Regression Fit")
-    plt.xlabel("House Size")
-    plt.ylabel("House Price")
-    plt.title("Polynomial Regression: House Size vs Price")
-    plt.legend()
-    plt.show()
+    plot(
+        X,
+        y,
+        PlotConfig(
+            x_label="House Size",
+            y_label="House Price",
+            title="Polynomial Regression: House Size vs Price",
+            data_label="Actual Prices",
+            fit_label="Polynomial Regression Fit",
+        ),
+        fit=(X_plot, predict_prices(model, poly, X_plot)),
+    )
 
 
 if __name__ == "__main__":
-    # Step 1: Load data
-    file_path = "../house_data.csv"  # Path to dataset
-    data = read_csv(file_path)
+    data = read_csv(ROOT / "house_data.csv")
+    X, y = data[SIZE].to_numpy(), data[PRICE].to_numpy()
 
-    # Step 2: Extract features and target
-    X = data["Size"].values
-    y = data["Price"].values
-
-    # Step 3: Train polynomial regression model
-    degree = 3
-    model, poly = train_polynomial_regression(X, y, degree)
-
-    # Step 4: Predict prices
-    predictions = predict_prices(model, poly, X)
-
-    # Step 5: Evaluate model
-    metrics = evaluate_model(y, predictions)
-    print("Model Evaluation Metrics:")
-    for metric, value in metrics.items():
-        print(f"{metric}: {value:.2f}")
-
-    # Step 6: Visualize results
+    model, poly = train_polynomial_regression(X, y, degree=3)
+    Metrics(**evaluate_model(y, predict_prices(model, poly, X))).report()
     visualize_data(X, y, model, poly)
